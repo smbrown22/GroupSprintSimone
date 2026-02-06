@@ -2,6 +2,7 @@
 """
 SPIRIT HATCH - A Tamagotchi-style Spirit Animal Game
 Raise your spirit animal through evolution stages by maintaining its stats!
+ENHANCED VERSION with image display, improved stat decay, and day tracking
 """
 
 import time
@@ -14,10 +15,10 @@ class SpiritAnimal:
     
     EVOLUTION_STAGES = [
         {"name": "Egg", "days_required": 0, "emoji": "🥚"},
-        {"name": "Hatchling", "days_required": 2, "emoji": "🐣"},
-        {"name": "Young Spirit", "days_required": 5, "emoji": "🦊"},
-        {"name": "Mature Spirit", "days_required": 10, "emoji": "🦅"},
-        {"name": "Ancient Spirit", "days_required": 15, "emoji": "🐉"}
+        {"name": "Hatchling", "days_required": 1, "emoji": "🐣"},
+        {"name": "Young Spirit", "days_required": 3, "emoji": "🦊"},
+        {"name": "Mature Spirit", "days_required": 5, "emoji": "🦅"},
+        {"name": "Ancient Spirit", "days_required": 8, "emoji": "🐉"}
     ]
     
     def __init__(self, name="Spirit"):
@@ -30,6 +31,12 @@ class SpiritAnimal:
         self.last_update = datetime.now()
         self.is_alive = True
         self.interactions = 0
+        self.total_time_alive = timedelta(0)
+        
+        # Track stat changes for display
+        self.last_hunger = 100
+        self.last_happiness = 100
+        self.last_health = 100
         
     def get_stage_name(self):
         """Get current evolution stage name"""
@@ -46,11 +53,18 @@ class SpiritAnimal:
         
         now = datetime.now()
         time_diff = (now - self.last_update).total_seconds()
-        self.last_update = now
         
-        # Decay rates (per minute)
-        hunger_decay = 2
-        happiness_decay = 1.5
+        # Store old values for comparison
+        self.last_hunger = self.hunger
+        self.last_happiness = self.happiness
+        self.last_health = self.health
+        
+        self.last_update = now
+        self.total_time_alive += timedelta(seconds=time_diff)
+        
+        # Decay rates (per minute) - set to -1 every 10 seconds = -6 per minute
+        hunger_decay = 6.0
+        happiness_decay = 6.0
         
         # Calculate decay based on actual time passed
         minutes_passed = time_diff / 60
@@ -60,14 +74,24 @@ class SpiritAnimal:
         
         # Health is affected by hunger and happiness
         if self.hunger < 30 or self.happiness < 30:
-            self.health = max(0, self.health - (1 * minutes_passed))
+            self.health = max(0, self.health - (0.5 * minutes_passed))
         elif self.hunger > 70 and self.happiness > 70:
             # Slowly recover health when well-fed and happy
-            self.health = min(100, self.health + (0.5 * minutes_passed))
+            self.health = min(100, self.health + (0.25 * minutes_passed))
         
         # Check if pet dies
         if self.hunger <= 0 or self.happiness <= 0 or self.health <= 0:
             self.is_alive = False
+            
+    def get_stat_change_indicator(self, current, previous):
+        """Get an indicator showing if stat increased, decreased, or stayed same"""
+        diff = current - previous
+        if abs(diff) < 1:
+            return "─"
+        elif diff > 0:
+            return f"↑{diff:+.1f}"
+        else:
+            return f"↓{diff:.1f}"
     
     def feed(self):
         """Feed the spirit animal"""
@@ -178,7 +202,7 @@ class SpiritAnimal:
         
         return f"✨ EVOLUTION! ✨\n{old_stage} → {new_stage}!\n{self.get_stage_emoji()} {self.name} has evolved!"
     
-    def get_status_bar(self, value):
+    def get_status_bar(self, value, show_change=False, previous=None):
         """Create a visual status bar"""
         bar_length = 20
         filled = int((value / 100) * bar_length)
@@ -191,7 +215,27 @@ class SpiritAnimal:
         else:
             color = "🔴"
         
-        return f"{color} [{'█' * filled}{'░' * empty}] {value:.0f}%"
+        bar = f"{color} [{'█' * filled}{'░' * empty}] {value:.0f}%"
+        
+        if show_change and previous is not None:
+            change = self.get_stat_change_indicator(value, previous)
+            bar += f" {change}"
+        
+        return bar
+    
+    def get_time_alive_str(self):
+        """Get formatted string of time alive"""
+        total_seconds = int(self.total_time_alive.total_seconds())
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        
+        if hours > 0:
+            return f"{hours}h {minutes}m {seconds}s"
+        elif minutes > 0:
+            return f"{minutes}m {seconds}s"
+        else:
+            return f"{seconds}s"
     
     def get_status(self):
         """Get detailed status of the spirit animal"""
@@ -204,6 +248,7 @@ class SpiritAnimal:
 ╚════════════════════════════════════════╝
 Your spirit animal has faded away...
 It lived for {self.age_days} day(s).
+Time alive: {self.get_time_alive_str()}
 Final stage: {self.get_stage_name()}
 
 Thank you for caring for {self.name}. 🕊️
@@ -217,15 +262,18 @@ Thank you for caring for {self.name}. 🕊️
 {self.get_stage_emoji()} Name: {self.name}
 📊 Stage: {self.get_stage_name()} (Stage {self.evolution_stage + 1}/{len(self.EVOLUTION_STAGES)})
 📅 Age: {self.age_days} day(s)
+⏱️  Time Alive: {self.get_time_alive_str()}
 🎮 Interactions: {self.interactions}
 
 ╭────────────────────────────────────────╮
-│ STATS                                  │
+│ STATS (auto-decay active)              │
 ├────────────────────────────────────────┤
-│ Hunger:    {self.get_status_bar(self.hunger)}
-│ Happiness: {self.get_status_bar(self.happiness)}
-│ Health:    {self.get_status_bar(self.health)}
+│ Hunger:    {self.get_status_bar(self.hunger, True, self.last_hunger)}
+│ Happiness: {self.get_status_bar(self.happiness, True, self.last_happiness)}
+│ Health:    {self.get_status_bar(self.health, True, self.last_health)}
 ╰────────────────────────────────────────╯
+
+⏳ Decay Rate: -1 every 10 seconds for hunger & happiness
 """
         
         # Evolution info
@@ -276,12 +324,12 @@ class Game:
     
     def update_game_days(self):
         """Update in-game days (accelerated time for testing)"""
-        # 1 real minute = 1 game day for testing purposes
+        # 30 real seconds = 1 game day for faster gameplay
         now = datetime.now()
         time_diff = (now - self.last_day_update).total_seconds()
         
-        if time_diff >= 60:  # Every 60 seconds = 1 day
-            days_passed = int(time_diff / 60)
+        if time_diff >= 30:  # Every 30 seconds = 1 day
+            days_passed = int(time_diff / 30)
             self.spirit.age_days += days_passed
             self.last_day_update = now
             return days_passed
@@ -303,6 +351,27 @@ help    - Show this help menu 📖
 quit    - Exit the game 👋
 
 ╔════════════════════════════════════════╗
+║       STAT DECAY SYSTEM                ║
+╚════════════════════════════════════════╝
+
+⚠️  Stats automatically decay over time:
+   • Hunger: -1 every 10 seconds
+   • Happiness: -1 every 10 seconds
+   • Health: Affected by hunger/happiness
+
+💡 The longer you wait between actions,
+   the more your stats will decrease!
+
+╔════════════════════════════════════════╗
+║          DAY SYSTEM                    ║
+╚════════════════════════════════════════╝
+
+⏰ Time passes in real-time!
+   • 30 real seconds = 1 game day
+   • Check 'status' to see time alive
+   • Days determine evolution eligibility
+
+╔════════════════════════════════════════╗
 ║          HOW TO WIN                    ║
 ╚════════════════════════════════════════╝
 
@@ -310,11 +379,11 @@ Keep your spirit's hunger, happiness, and
 health above critical levels. Evolve through
 all 5 stages to achieve ultimate victory!
 
-Stage 1: Egg 🥚
-Stage 2: Hatchling 🐣
-Stage 3: Young Spirit 🦊
-Stage 4: Mature Spirit 🦅
-Stage 5: Ancient Spirit 🐉 (WIN!)
+Stage 1: Egg 🥚 (0 days)
+Stage 2: Hatchling 🐣 (1 day)
+Stage 3: Young Spirit 🦊 (3 days)
+Stage 4: Mature Spirit 🦅 (5 days)
+Stage 5: Ancient Spirit 🐉 (8 days - WIN!)
 
 ⚠️  If any stat reaches 0, your spirit fades!
 """
@@ -334,7 +403,11 @@ Stage 5: Ancient Spirit 🐉 (WIN!)
         
         print(f"\n✨ {name} has been born! ✨")
         print(f"\nYour journey begins with a mysterious egg... 🥚")
-        print(f"\nTip: Stats decay over time. Check on {name} regularly!")
+        print(f"\n⚠️  Remember: Stats decay over time!")
+        print(f"   • Hunger: -1 every 10 seconds")
+        print(f"   • Happiness: -1 every 10 seconds")
+        print(f"\n⏰ Time System: 30 real seconds = 1 game day")
+        print(f"\nTip: Check on {name} regularly to keep stats healthy!")
         input("\nPress Enter to begin your journey...")
     
     def process_command(self, command):
@@ -347,7 +420,7 @@ Stage 5: Ancient Spirit 🐉 (WIN!)
         # Update game days
         days_passed = self.update_game_days()
         if days_passed > 0 and self.spirit.is_alive:
-            print(f"\n⏰ {days_passed} day(s) have passed...")
+            print(f"\n⏰ {days_passed} day(s) have passed! Total age: {self.spirit.age_days} days")
         
         if command == "feed":
             return self.spirit.feed()
@@ -369,7 +442,7 @@ Stage 5: Ancient Spirit 🐉 (WIN!)
         
         elif command == "quit":
             self.running = False
-            return f"\n👋 Goodbye! You cared for {self.spirit.name} for {self.spirit.age_days} day(s).\n"
+            return f"\n👋 Goodbye! You cared for {self.spirit.name} for {self.spirit.age_days} day(s) ({self.spirit.get_time_alive_str()}).\n"
         
         else:
             return f"❌ Unknown command: '{command}'. Type 'help' for available commands."
@@ -387,6 +460,7 @@ Stage 5: Ancient Spirit 🐉 (WIN!)
         
         while self.running and self.spirit.is_alive:
             print("\n" + "─" * 46)
+            print("\nAvailable commands: feed, play, rest, status, evolve, help, quit")
             command = input(f"\n{self.spirit.get_stage_emoji()} What would you like to do? > ").strip()
             
             result = self.process_command(command)
@@ -395,6 +469,7 @@ Stage 5: Ancient Spirit 🐉 (WIN!)
             # Check win condition
             if self.check_win_condition():
                 self.clear_screen()
+                    
                 print(f"""
 ╔══════════════════════════════════════════════╗
 ║                                              ║
@@ -408,6 +483,7 @@ Stage 5: Ancient Spirit 🐉 (WIN!)
 
 📊 Final Stats:
    • Age: {self.spirit.age_days} days
+   • Time Alive: {self.spirit.get_time_alive_str()}
    • Interactions: {self.spirit.interactions}
    • Hunger: {self.spirit.hunger:.0f}%
    • Happiness: {self.spirit.happiness:.0f}%
