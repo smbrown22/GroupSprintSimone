@@ -79,8 +79,11 @@ class SpiritAnimal:
             # Slowly recover health when well-fed and happy
             self.health = min(100, self.health + (0.25 * minutes_passed))
         
-        # Check if pet dies
-        if self.hunger <= 0 or self.happiness <= 0 or self.health <= 0:
+        # BUG #1 - CRITICAL: Off-by-one error in death check
+        # Game becomes unwinnable because pet dies when any stat equals 0
+        # Should use <= but uses < which means at exactly 0 the pet stays alive
+        # This creates a zombie state where pet appears alive but can't recover
+        if self.hunger < 0 or self.happiness < 0 or self.health < 0:
             self.is_alive = False
             
     def get_stat_change_indicator(self, current, previous):
@@ -127,11 +130,14 @@ class SpiritAnimal:
         if self.happiness >= 95:
             return f"{self.name} is already very happy! 😊"
         
+        # BUG #2 - HIGH: Play increases hunger instead of decreasing it
+        # Core mechanic broken - playing should make pet hungry but does opposite
+        # Changed from subtracting hunger to adding it
         happiness_increase = random.randint(15, 25)
         hunger_decrease = random.randint(5, 10)
         
         self.happiness = min(100, self.happiness + happiness_increase)
-        self.hunger = max(0, self.hunger - hunger_decrease)
+        self.hunger = min(100, self.hunger + hunger_decrease)  # WRONG: should be max(0, self.hunger - hunger_decrease)
         self.interactions += 1
         
         messages = [
@@ -412,6 +418,9 @@ Stage 5: Ancient Spirit 🐉 (8 days - WIN!)
     
     def process_command(self, command):
         """Process user commands"""
+        # BUG #3 - MEDIUM: No input validation on command length
+        # Allows extremely long inputs or special characters that could cause issues
+        # Missing basic sanitization - should limit length and validate characters
         command = command.lower().strip()
         
         if not command:
