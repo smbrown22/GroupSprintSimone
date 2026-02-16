@@ -404,7 +404,17 @@ Stage 5: Ancient Spirit 🐉 (8 days - WIN!)
         self.print_header()
         
         print("Welcome, Spirit Keeper!")
-        name = input("What will you name your spirit animal? (Press Enter for 'Spirit'): ").strip()
+        
+        try:
+            name = input("What will you name your spirit animal? (Press Enter for 'Spirit'): ").strip()
+        except KeyboardInterrupt:
+            print("\n\n👋 Thanks for considering Spirit Hatch! Goodbye!")
+            self.running = False
+            return
+        except EOFError:
+            print("\n\n❌ Input error occurred. Exiting game.")
+            self.running = False
+            return
         
         if not name:
             name = "Spirit"
@@ -418,7 +428,17 @@ Stage 5: Ancient Spirit 🐉 (8 days - WIN!)
         print(f"   • Happiness: -1 every 10 seconds")
         print(f"\n⏰ Time System: 30 real seconds = 1 game day")
         print(f"\nTip: Check on {name} regularly to keep stats healthy!")
-        input("\nPress Enter to begin your journey...")
+        
+        try:
+            input("\nPress Enter to begin your journey...")
+        except KeyboardInterrupt:
+            print("\n\n👋 Thanks for considering Spirit Hatch! Goodbye!")
+            self.running = False
+            return
+        except EOFError:
+            print("\n\n❌ Input error occurred. Exiting game.")
+            self.running = False
+            return
     
     def process_command(self, command):
         """Process user commands"""
@@ -482,10 +502,23 @@ Stage 5: Ancient Spirit 🐉 (8 days - WIN!)
         """Main game loop"""
         self.start_game()
         
+        # Check if game was cancelled during startup
+        if not self.running:
+            return
+        
         while self.running and self.spirit.is_alive:
             print("\n" + "─" * 46)
             print("\nAvailable commands: feed, play, rest, status, evolve, help, quit")
-            command = input(f"\n{self.spirit.get_stage_emoji()} What would you like to do? > ").strip()
+            
+            try:
+                command = input(f"\n{self.spirit.get_stage_emoji()} What would you like to do? > ").strip()
+            except KeyboardInterrupt:
+                print("\n\n👋 Goodbye! Thanks for playing Spirit Hatch!")
+                print(f"You cared for {self.spirit.name} for {self.spirit.age_days} day(s) ({self.spirit.get_time_alive_str()}).\n")
+                break
+            except EOFError:
+                print("\n\n❌ Input error occurred. Exiting game.")
+                break
             
             result = self.process_command(command)
             print(f"\n{result}")
