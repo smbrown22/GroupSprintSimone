@@ -1,565 +1,428 @@
 #!/usr/bin/env python3
 """
-SPIRIT HATCH - A Tamagotchi-style Spirit Animal Game
-Raise your spirit animal through evolution stages by maintaining its stats!
-ENHANCED VERSION with image display, improved stat decay, and day tracking
-FIXED VERSION - All bugs corrected
+SPIRIT HATCH - Simple Python Web Server
+Uses only Python standard library (no external dependencies!)
+Works perfectly in VS Code
 """
 
-import time
+import http.server
+import socketserver
+import json
 import random
+import time
+from urllib.parse import parse_qs, urlparse
 import os
-from datetime import datetime, timedelta
 
-class SpiritAnimal:
-    """Represents the player's spirit animal pet"""
+PORT = 8000
+
+# Game constants
+EVOLUTION_STAGES = [
+    {"name": "Egg", "days_required": 0, "emoji": "🥚"},
+    {"name": "Hatchling", "days_required": 1, "emoji": "🐣"},
+    {"name": "Young Spirit", "days_required": 3, "emoji": "🦊"},
+    {"name": "Mature Spirit", "days_required": 5, "emoji": "🦅"},
+    {"name": "Ancient Spirit", "days_required": 8, "emoji": "🐉"}
+]
+
+RANDOM_EVENTS = [
+    {
+        "name": "Shiny Stone",
+        "message": "✨ {name} found a shiny stone and is delighted!",
+        "effects": {"happiness": 15, "hunger": -5},
+        "emoji": "💎"
+    },
+    {
+        "name": "Gentle Rain",
+        "message": "🌧️ A gentle rain falls, refreshing {name}!",
+        "effects": {"health": 10, "happiness": 10},
+        "emoji": "🌧️"
+    },
+    {
+        "name": "Wild Spirit Visit",
+        "message": "👻 A wild spirit visits and plays with {name}!",
+        "effects": {"happiness": 20, "hunger": -10},
+        "emoji": "👻"
+    },
+    {
+        "name": "Mysterious Berry",
+        "message": "🫐 {name} discovers a mysterious berry bush!",
+        "effects": {"hunger": 15, "health": 5},
+        "emoji": "🫐"
+    },
+    {
+        "name": "Dark Cloud",
+        "message": "☁️ A dark cloud passes overhead, making {name} uneasy...",
+        "effects": {"happiness": -10, "health": -5},
+        "emoji": "☁️"
+    },
+    {
+        "name": "Shooting Star",
+        "message": "⭐ {name} sees a shooting star and makes a wish!",
+        "effects": {"happiness": 25, "health": 10},
+        "emoji": "⭐"
+    },
+    {
+        "name": "Ancient Whisper",
+        "message": "🌀 Ancient whispers grant {name} wisdom and energy!",
+        "effects": {"health": 15, "happiness": 15, "hunger": 10},
+        "emoji": "🌀"
+    },
+    {
+        "name": "Spirit Feast",
+        "message": "🍱 {name} stumbles upon a spirit feast!",
+        "effects": {"hunger": 25, "happiness": 15},
+        "emoji": "🍱"
+    },
+    {
+        "name": "Moonbeam",
+        "message": "🌙 A moonbeam illuminates {name}, restoring vitality!",
+        "effects": {"health": 20, "happiness": 10},
+        "emoji": "🌙"
+    }
+]
+
+# Simple in-memory game state (one game at a time)
+game_state = {
+    "name": "Spirit",
+    "hunger": 50.0,
+    "happiness": 50.0,
+    "health": 50.0,
+    "age_days": 0,
+    "evolution_stage": 0,
+    "interactions": 0,
+    "events_experienced": 0,
+    "is_alive": True,
+    "start_time": time.time(),
+    "last_update": time.time(),
+    "last_day_update": time.time(),
+    "last_event_check": time.time()
+}
+
+def clamp(value, min_val, max_val):
+    """Clamp a value between min and max"""
+    return max(min_val, min(max_val, value))
+
+def update_stats():
+    """Update stats based on time passed"""
+    global game_state
     
-    EVOLUTION_STAGES = [
-        {"name": "Egg", "days_required": 0, "emoji": "🥚"},
-        {"name": "Hatchling", "days_required": 1, "emoji": "🐣"},
-        {"name": "Young Spirit", "days_required": 3, "emoji": "🦊"},
-        {"name": "Mature Spirit", "days_required": 5, "emoji": "🦅"},
-        {"name": "Ancient Spirit", "days_required": 8, "emoji": "🐉"}
-    ]
+    if not game_state["is_alive"]:
+        return
     
-    def __init__(self, name="Spirit"):
-        self.name = name
-        self.hunger = 50  # 0-100
-        self.happiness = 50  # 0-100
-        self.health = 50  # 0-100
-        self.age_days = 0
-        self.evolution_stage = 0
-        self.last_update = datetime.now()
-        self.is_alive = True
-        self.interactions = 0
-        self.total_time_alive = timedelta(0)
-        
-        # Track stat changes for display
-        self.last_hunger = 50
-        self.last_happiness = 50
-        self.last_health = 50
-        
-    def get_stage_name(self):
-        """Get current evolution stage name"""
-        return self.EVOLUTION_STAGES[self.evolution_stage]["name"]
+    now = time.time()
+    time_diff = now - game_state["last_update"]
+    game_state["last_update"] = now
     
-    def get_stage_emoji(self):
-        """Get current evolution stage emoji"""
-        return self.EVOLUTION_STAGES[self.evolution_stage]["emoji"]
+    # Decay: -3 every 10 seconds = -18 per minute = -0.3 per second
+    decay_rate = 0.3
+    game_state["hunger"] = max(0, game_state["hunger"] - (decay_rate * time_diff))
+    game_state["happiness"] = max(0, game_state["happiness"] - (decay_rate * time_diff))
     
-    def update_stats(self):
-        """Update stats based on time passed since last update"""
-        if not self.is_alive:
-            return
+    # Health affected by hunger and happiness
+    if game_state["hunger"] < 30 or game_state["happiness"] < 30:
+        game_state["health"] = max(0, game_state["health"] - (0.1 * time_diff))
+    elif game_state["hunger"] > 70 and game_state["happiness"] > 70:
+        game_state["health"] = min(100, game_state["health"] + (0.05 * time_diff))
+    
+    # Check death
+    if game_state["hunger"] <= 0 or game_state["happiness"] <= 0 or game_state["health"] <= 0:
+        game_state["is_alive"] = False
+    
+    # Update days (30 seconds = 1 day)
+    if now - game_state["last_day_update"] >= 30:
+        game_state["age_days"] += 1
+        game_state["last_day_update"] = now
+
+def check_random_event():
+    """Check if a random event should occur"""
+    global game_state
+    
+    if not game_state["is_alive"]:
+        return None
+    
+    now = time.time()
+    if now - game_state["last_event_check"] >= 60:  # Check every 60 seconds
+        game_state["last_event_check"] = now
         
-        now = datetime.now()
-        time_diff = (now - self.last_update).total_seconds()
-        
-        # Store old values for comparison
-        self.last_hunger = self.hunger
-        self.last_happiness = self.happiness
-        self.last_health = self.health
-        
-        self.last_update = now
-        self.total_time_alive += timedelta(seconds=time_diff)
-        
-        # Decay rates (per minute) - set to -1 every 10 seconds = -6 per minute
-        hunger_decay = 6.0
-        happiness_decay = 6.0
-        
-        # Calculate decay based on actual time passed
-        minutes_passed = time_diff / 60
-        
-        self.hunger = max(0, self.hunger - (hunger_decay * minutes_passed))
-        self.happiness = max(0, self.happiness - (happiness_decay * minutes_passed))
-        
-        # Health is affected by hunger and happiness
-        if self.hunger < 30 or self.happiness < 30:
-            self.health = max(0, self.health - (0.5 * minutes_passed))
-        elif self.hunger > 70 and self.happiness > 70:
-            # Slowly recover health when well-fed and happy
-            self.health = min(100, self.health + (0.25 * minutes_passed))
-        
-        # FIX #1 - CRITICAL: Fixed death check to use <= instead of <
-        # Pet now correctly dies when any stat reaches or goes below 0
-        if self.hunger <= 0 or self.happiness <= 0 or self.health <= 0:
-            self.is_alive = False
+        if random.random() < 0.20:  # 20% chance
+            event = random.choice(RANDOM_EVENTS)
             
-    def get_stat_change_indicator(self, current, previous):
-        """Get an indicator showing if stat increased, decreased, or stayed same"""
-        diff = current - previous
-        if abs(diff) < 1:
-            return "─"
-        elif diff > 0:
-            return f"↑{diff:+.1f}"
-        else:
-            return f"↓{diff:.1f}"
-    
-    def feed(self):
-        """Feed the spirit animal"""
-        if not self.is_alive:
-            return "Your spirit has already faded..."
-        
-        self.update_stats()
-        
-        if self.hunger >= 95:
-            return f"{self.name} is already full! 🍽️"
-        
-        hunger_increase = random.randint(15, 25)
-        health_increase = random.randint(5, 10)
-        
-        self.hunger = min(100, self.hunger + hunger_increase)
-        self.health = min(100, self.health + health_increase)
-        self.interactions += 1
-        
-        messages = [
-            f"{self.name} happily munches on spiritual energy! ✨",
-            f"{self.name} glows brighter as it feeds! 🌟",
-            f"{self.name} feels nourished and content! 💫"
-        ]
-        return random.choice(messages)
-    
-    def play(self):
-        """Play with the spirit animal"""
-        if not self.is_alive:
-            return "Your spirit has already faded..."
-        
-        self.update_stats()
-        
-        if self.happiness >= 95:
-            return f"{self.name} is already very happy! 😊"
-        
-        # FIX #2 - HIGH: Play now correctly decreases hunger
-        # Playing with pet makes it hungry (uses energy)
-        happiness_increase = random.randint(15, 25)
-        hunger_decrease = random.randint(5, 10)
-        
-        self.happiness = min(100, self.happiness + happiness_increase)
-        self.hunger = max(0, self.hunger - hunger_decrease)  # FIXED: Now correctly subtracts hunger
-        self.interactions += 1
-        
-        messages = [
-            f"{self.name} playfully dances around you! 💃",
-            f"{self.name} sparkles with joy! ✨😊",
-            f"{self.name} does a happy spin! 🌀",
-            f"You share a magical moment with {self.name}! 🎭"
-        ]
-        return random.choice(messages)
-    
-    def rest(self):
-        """Let the spirit animal rest"""
-        if not self.is_alive:
-            return "Your spirit has already faded..."
-        
-        self.update_stats()
-        
-        if self.health >= 95:
-            return f"{self.name} is already well-rested! 😴"
-        
-        health_increase = random.randint(20, 30)
-        happiness_increase = random.randint(5, 10)
-        
-        self.health = min(100, self.health + health_increase)
-        self.happiness = min(100, self.happiness + happiness_increase)
-        self.interactions += 1
-        
-        messages = [
-            f"{self.name} curls up and rests peacefully... 😴",
-            f"{self.name} takes a rejuvenating nap! 💤",
-            f"{self.name} meditates and restores energy! 🧘"
-        ]
-        return random.choice(messages)
-    
-    def can_evolve(self):
-        """Check if spirit animal can evolve"""
-        if self.evolution_stage >= len(self.EVOLUTION_STAGES) - 1:
-            return False
-        
-        next_stage = self.EVOLUTION_STAGES[self.evolution_stage + 1]
-        return self.age_days >= next_stage["days_required"]
-    
-    def evolve(self):
-        """Evolve the spirit animal to next stage"""
-        if not self.is_alive:
-            return "Your spirit has already faded..."
-        
-        if not self.can_evolve():
-            next_stage = self.EVOLUTION_STAGES[self.evolution_stage + 1]
-            days_needed = next_stage["days_required"] - self.age_days
-            return f"❌ {self.name} needs {days_needed} more day(s) of care to evolve!"
-        
-        if self.evolution_stage >= len(self.EVOLUTION_STAGES) - 1:
-            return f"🌟 {self.name} is already at maximum evolution!"
-        
-        # Check if stats are good enough for evolution
-        if self.hunger < 50 or self.happiness < 50 or self.health < 50:
-            return f"❌ {self.name} needs better care to evolve! (All stats must be above 50)"
-        
-        old_stage = self.get_stage_name()
-        self.evolution_stage += 1
-        new_stage = self.get_stage_name()
-        
-        # Boost stats on evolution
-        self.hunger = min(100, self.hunger + 20)
-        self.happiness = min(100, self.happiness + 20)
-        self.health = min(100, self.health + 20)
-        
-        return f"✨ EVOLUTION! ✨\n{old_stage} → {new_stage}!\n{self.get_stage_emoji()} {self.name} has evolved!"
-    
-    def get_status_bar(self, value, show_change=False, previous=None):
-        """Create a visual status bar"""
-        bar_length = 20
-        filled = int((value / 100) * bar_length)
-        empty = bar_length - filled
-        
-        if value > 70:
-            color = "🟢"
-        elif value > 30:
-            color = "🟡"
-        else:
-            color = "🔴"
-        
-        bar = f"{color} [{'█' * filled}{'░' * empty}] {value:.0f}%"
-        
-        if show_change and previous is not None:
-            change = self.get_stat_change_indicator(value, previous)
-            bar += f" {change}"
-        
-        return bar
-    
-    def get_time_alive_str(self):
-        """Get formatted string of time alive"""
-        total_seconds = int(self.total_time_alive.total_seconds())
-        hours = total_seconds // 3600
-        minutes = (total_seconds % 3600) // 60
-        seconds = total_seconds % 60
-        
-        if hours > 0:
-            return f"{hours}h {minutes}m {seconds}s"
-        elif minutes > 0:
-            return f"{minutes}m {seconds}s"
-        else:
-            return f"{seconds}s"
-    
-    def get_status(self):
-        """Get detailed status of the spirit animal"""
-        self.update_stats()
-        
-        if not self.is_alive:
-            return f"""
-╔══════════════════════════════════════════════╗
-║              💀 GAME OVER 💀                 ║
-╚══════════════════════════════════════════════╝
-Your spirit animal has faded away...
-It lived for {self.age_days} day(s).
-Time alive: {self.get_time_alive_str()}
-Final stage: {self.get_stage_name()}
-
-Thank you for caring for {self.name}. 🕊️
-"""
-        
-        status = f"""
-╔══════════════════════════════════════════════╗
-║            SPIRIT HATCH STATUS               ║
-╚══════════════════════════════════════════════╝
-
-{self.get_stage_emoji()} Name: {self.name}
-📊 Stage: {self.get_stage_name()} (Stage {self.evolution_stage + 1}/{len(self.EVOLUTION_STAGES)})
-📅 Age: {self.age_days} day(s)
-⏱️  Time Alive: {self.get_time_alive_str()}
-🎮 Interactions: {self.interactions}
-
-╭──────────────────────────────────────────────╮
-│ STATS (auto-decay active)                    │
-├──────────────────────────────────────────────┤
-│ Hunger:    {self.get_status_bar(self.hunger, True, self.last_hunger)}
-│ Happiness: {self.get_status_bar(self.happiness, True, self.last_happiness)}
-│ Health:    {self.get_status_bar(self.health, True, self.last_health)}
-╰──────────────────────────────────────────────╯
-
-⏳ Decay Rate: -1 every 10 seconds for hunger & happiness
-"""
-        
-        # Evolution info
-        if self.evolution_stage < len(self.EVOLUTION_STAGES) - 1:
-            next_stage = self.EVOLUTION_STAGES[self.evolution_stage + 1]
-            days_until = max(0, next_stage["days_required"] - self.age_days)
+            # Apply effects
+            if "hunger" in event["effects"]:
+                game_state["hunger"] = clamp(game_state["hunger"] + event["effects"]["hunger"], 0, 100)
+            if "happiness" in event["effects"]:
+                game_state["happiness"] = clamp(game_state["happiness"] + event["effects"]["happiness"], 0, 100)
+            if "health" in event["effects"]:
+                game_state["health"] = clamp(game_state["health"] + event["effects"]["health"], 0, 100)
             
-            if days_until > 0:
-                status += f"\n⏳ Next evolution in: {days_until} day(s)"
+            game_state["events_experienced"] += 1
+            return event
+    
+    return None
+
+def perform_action(action):
+    """Perform a game action"""
+    global game_state
+    
+    update_stats()
+    
+    if not game_state["is_alive"]:
+        return {"success": False, "message": "Your spirit has faded..."}
+    
+    message = ""
+    
+    if action == "feed":
+        if game_state["hunger"] >= 95:
+            message = f"{game_state['name']} is already full! 🍽️"
+        else:
+            game_state["hunger"] = min(100, game_state["hunger"] + random.randint(15, 25))
+            game_state["health"] = min(100, game_state["health"] + random.randint(5, 10))
+            game_state["interactions"] += 1
+            messages = [
+                f"{game_state['name']} happily munches on spiritual energy! ✨",
+                f"{game_state['name']} glows brighter as it feeds! 🌟",
+                f"{game_state['name']} feels nourished and content! 💫"
+            ]
+            message = random.choice(messages)
+    
+    elif action == "play":
+        if game_state["happiness"] >= 95:
+            message = f"{game_state['name']} is already very happy! 😊"
+        else:
+            game_state["happiness"] = min(100, game_state["happiness"] + random.randint(15, 25))
+            game_state["hunger"] = max(0, game_state["hunger"] - random.randint(5, 10))
+            game_state["interactions"] += 1
+            messages = [
+                f"{game_state['name']} playfully dances around you! 💃",
+                f"{game_state['name']} sparkles with joy! ✨😊",
+                f"{game_state['name']} does a happy spin! 🌀"
+            ]
+            message = random.choice(messages)
+    
+    elif action == "rest":
+        if game_state["health"] >= 95:
+            message = f"{game_state['name']} is already well-rested! 😴"
+        else:
+            game_state["health"] = min(100, game_state["health"] + random.randint(20, 30))
+            game_state["happiness"] = min(100, game_state["happiness"] + random.randint(5, 10))
+            game_state["interactions"] += 1
+            messages = [
+                f"{game_state['name']} curls up and rests peacefully... 😴",
+                f"{game_state['name']} takes a rejuvenating nap! 💤",
+                f"{game_state['name']} meditates and restores energy! 🧘"
+            ]
+            message = random.choice(messages)
+    
+    elif action == "train":
+        game_state["health"] = min(100, game_state["health"] + random.randint(12, 18))
+        game_state["happiness"] = min(100, game_state["happiness"] + random.randint(10, 15))
+        game_state["hunger"] = max(0, game_state["hunger"] - random.randint(15, 20))
+        game_state["interactions"] += 1
+        messages = [
+            f"{game_state['name']} practices spiritual techniques! 🥋",
+            f"{game_state['name']} trains diligently! 💪",
+            f"{game_state['name']} masters a new skill! 🎯"
+        ]
+        message = random.choice(messages)
+    
+    elif action == "explore":
+        outcome = random.choice(["great", "good", "neutral", "bad"])
+        
+        if outcome == "great":
+            game_state["happiness"] = min(100, game_state["happiness"] + random.randint(20, 30))
+            game_state["hunger"] = min(100, game_state["hunger"] + random.randint(10, 20))
+            game_state["health"] = min(100, game_state["health"] + random.randint(5, 15))
+            message = f"{game_state['name']} discovers a magical paradise! 🌺✨"
+        elif outcome == "good":
+            game_state["happiness"] = min(100, game_state["happiness"] + random.randint(15, 20))
+            game_state["hunger"] = min(100, game_state["hunger"] + random.randint(5, 10))
+            message = f"{game_state['name']} has a pleasant adventure! 🗺️"
+        elif outcome == "neutral":
+            game_state["happiness"] = min(100, game_state["happiness"] + random.randint(5, 10))
+            game_state["hunger"] = max(0, game_state["hunger"] - random.randint(5, 10))
+            message = f"{game_state['name']} wanders around safely. 🚶"
+        else:
+            game_state["happiness"] = max(0, game_state["happiness"] - random.randint(10, 15))
+            game_state["health"] = max(0, game_state["health"] - random.randint(10, 15))
+            game_state["hunger"] = max(0, game_state["hunger"] - random.randint(5, 10))
+            message = f"{game_state['name']} gets lost and returns tired... 😰"
+        
+        game_state["interactions"] += 1
+    
+    elif action == "meditate":
+        game_state["health"] = min(100, game_state["health"] + random.randint(10, 15))
+        game_state["happiness"] = min(100, game_state["happiness"] + random.randint(10, 15))
+        game_state["hunger"] = min(100, game_state["hunger"] + random.randint(8, 12))
+        game_state["interactions"] += 1
+        messages = [
+            f"{game_state['name']} enters a meditative state... 🧘‍♀️✨",
+            f"{game_state['name']} connects with cosmic energy! 🌌",
+            f"{game_state['name']} achieves inner peace! ☯️"
+        ]
+        message = random.choice(messages)
+    
+    elif action == "groom":
+        if game_state["happiness"] >= 90 and game_state["health"] >= 90:
+            message = f"{game_state['name']} is already pristine! ✨"
+        else:
+            game_state["happiness"] = min(100, game_state["happiness"] + random.randint(12, 18))
+            game_state["health"] = min(100, game_state["health"] + random.randint(8, 12))
+            game_state["interactions"] += 1
+            messages = [
+                f"{game_state['name']} enjoys being groomed! ✨🪮",
+                f"You tend to {game_state['name']}'s form! 🌟",
+                f"{game_state['name']} feels pampered! 💆‍♀️💕"
+            ]
+            message = random.choice(messages)
+    
+    elif action == "evolve":
+        if game_state["evolution_stage"] >= len(EVOLUTION_STAGES) - 1:
+            message = f"🌟 {game_state['name']} is at maximum evolution!"
+        else:
+            next_stage = EVOLUTION_STAGES[game_state["evolution_stage"] + 1]
+            
+            if game_state["age_days"] < next_stage["days_required"]:
+                days_needed = next_stage["days_required"] - game_state["age_days"]
+                message = f"❌ Need {days_needed} more day(s) to evolve!"
+            elif game_state["hunger"] < 50 or game_state["happiness"] < 50 or game_state["health"] < 50:
+                message = "❌ All stats must be above 50 to evolve!"
             else:
-                # Check if stats are also high enough (must be > 50)
-                if self.hunger > 50 and self.happiness > 50 and self.health > 50:
-                    status += f"\n✨ Ready to evolve! Use 'evolve' command!"
-                else:
-                    status += f"\n⚠️  Evolution available in {days_until} day(s), but stats need improvement!"
-                    status += f"\n   (All stats must be above 50 to evolve)"
-        else:
-            status += f"\n🌟 Maximum evolution reached!"
-        
-        # Warnings
-        if self.hunger < 30:
-            status += f"\n⚠️  {self.name} is very hungry!"
-        if self.happiness < 30:
-            status += f"\n⚠️  {self.name} is feeling sad!"
-        if self.health < 30:
-            status += f"\n⚠️  {self.name}'s health is critical!"
-        
-        return status
-
-
-class Game:
-    """Main game controller"""
+                old_stage = EVOLUTION_STAGES[game_state["evolution_stage"]]
+                game_state["evolution_stage"] += 1
+                new_stage = EVOLUTION_STAGES[game_state["evolution_stage"]]
+                
+                game_state["hunger"] = min(100, game_state["hunger"] + 20)
+                game_state["happiness"] = min(100, game_state["happiness"] + 20)
+                game_state["health"] = min(100, game_state["health"] + 20)
+                
+                message = f"✨ EVOLUTION! ✨\n{old_stage['name']} → {new_stage['name']}!"
     
-    def __init__(self):
-        self.spirit = None
-        self.running = True
-        self.game_start = datetime.now()
-        self.last_day_update = datetime.now()
-        
-    def clear_screen(self):
-        """Clear the terminal screen"""
-        os.system('clear' if os.name != 'nt' else 'cls')
+    else:
+        return {"error": "Invalid action"}
     
-    def print_header(self):
-        """Print game header"""
-        print("""
-╔══════════════════════════════════════════════╗
-║                                              ║
-║           ✨ SPIRIT HATCH ✨                 ║
-║      Raise Your Mystical Spirit Animal      ║
-║                                              ║
-╚══════════════════════════════════════════════╝
-""")
+    return {
+        "success": True,
+        "message": message,
+        "state": game_state,
+        "stage": EVOLUTION_STAGES[game_state["evolution_stage"]]
+    }
+
+
+class GameHandler(http.server.SimpleHTTPRequestHandler):
+    """Custom HTTP request handler for the game"""
     
-    def update_game_days(self):
-        """Update in-game days (accelerated time for testing)"""
-        # 30 real seconds = 1 game day for faster gameplay
-        now = datetime.now()
-        time_diff = (now - self.last_day_update).total_seconds()
+    def do_GET(self):
+        """Handle GET requests"""
+        parsed_path = urlparse(self.path)
         
-        if time_diff >= 30:  # Every 30 seconds = 1 day
-            days_passed = int(time_diff / 30)
-            self.spirit.age_days += days_passed
-            self.last_day_update = now
-            return days_passed
-        return 0
-    
-    def show_help(self):
-        """Display help information"""
-        return """
-╔══════════════════════════════════════════════╗
-║                  COMMANDS                    ║
-╚══════════════════════════════════════════════╝
-
-feed    - Feed your spirit animal 🍖
-play    - Play with your spirit animal 🎮
-rest    - Let your spirit rest 😴
-status  - View detailed stats 📊
-evolve  - Evolve to next stage ✨
-help    - Show this help menu 📖
-quit    - Exit the game 👋
-
-╔══════════════════════════════════════════════╗
-║             STAT DECAY SYSTEM                ║
-╚══════════════════════════════════════════════╝
-
-⚠️  Stats automatically decay over time:
-   • Hunger: -1 every 10 seconds
-   • Happiness: -1 every 10 seconds
-   • Health: Affected by hunger/happiness
-
-💡 The longer you wait between actions,
-   the more your stats will decrease!
-
-╔══════════════════════════════════════════════╗
-║                DAY SYSTEM                    ║
-╚══════════════════════════════════════════════╝
-
-⏰ Time passes in real-time!
-   • 30 real seconds = 1 game day
-   • Check 'status' to see time alive
-   • Days determine evolution eligibility
-
-╔══════════════════════════════════════════════╗
-║                HOW TO WIN                    ║
-╚══════════════════════════════════════════════╝
-
-Keep your spirit's hunger, happiness, and
-health above critical levels. Evolve through
-all 5 stages to achieve ultimate victory!
-
-Stage 1: Egg 🥚 (0 days)
-Stage 2: Hatchling 🐣 (1 day)
-Stage 3: Young Spirit 🦊 (3 days)
-Stage 4: Mature Spirit 🦅 (5 days)
-Stage 5: Ancient Spirit 🐉 (8 days - WIN!)
-
-⚠️  If any stat reaches 0, your spirit fades!
-"""
-    
-    def start_game(self):
-        """Initialize and start the game"""
-        self.clear_screen()
-        self.print_header()
-        
-        print("Welcome, Spirit Keeper!")
-        
-        try:
-            name = input("What will you name your spirit animal? (Press Enter for 'Spirit'): ").strip()
-        except KeyboardInterrupt:
-            print("\n\n👋 Thanks for considering Spirit Hatch! Goodbye!")
-            self.running = False
-            return
-        except EOFError:
-            print("\n\n❌ Input error occurred. Exiting game.")
-            self.running = False
-            return
-        
-        if not name:
-            name = "Spirit"
-        
-        self.spirit = SpiritAnimal(name)
-        
-        print(f"\n✨ {name} has been born! ✨")
-        print(f"\nYour journey begins with a mysterious egg... 🥚")
-        print(f"\n⚠️  Remember: Stats decay over time!")
-        print(f"   • Hunger: -1 every 10 seconds")
-        print(f"   • Happiness: -1 every 10 seconds")
-        print(f"\n⏰ Time System: 30 real seconds = 1 game day")
-        print(f"\nTip: Check on {name} regularly to keep stats healthy!")
-        
-        try:
-            input("\nPress Enter to begin your journey...")
-        except KeyboardInterrupt:
-            print("\n\n👋 Thanks for considering Spirit Hatch! Goodbye!")
-            self.running = False
-            return
-        except EOFError:
-            print("\n\n❌ Input error occurred. Exiting game.")
-            self.running = False
-            return
-    
-    def process_command(self, command):
-        """Process user commands"""
-        # FIX #3 - MEDIUM: Added input validation for command length and characters
-        # Limit command length to 50 chars and validate against allowed characters
-        MAX_COMMAND_LENGTH = 50
-        
-        command = command.strip()
-        
-        # Validate command length
-        if len(command) > MAX_COMMAND_LENGTH:
-            return f"❌ Command too long (max {MAX_COMMAND_LENGTH} characters). Please try again."
-        
-        # Validate command contains only allowed characters (letters, spaces, hyphens)
-        if command and not all(c.isalpha() or c.isspace() or c == '-' for c in command):
-            return "❌ Invalid characters in command. Please use only letters."
-        
-        command = command.lower()
-        
-        if not command:
-            return "Please enter a command. Type 'help' for available commands."
-        
-        # Update game days
-        days_passed = self.update_game_days()
-        if days_passed > 0 and self.spirit.is_alive:
-            print(f"\n⏰ {days_passed} day(s) have passed! Total age: {self.spirit.age_days} days")
-        
-        if command == "feed":
-            return self.spirit.feed()
-        
-        elif command == "play":
-            return self.spirit.play()
-        
-        elif command == "rest":
-            return self.spirit.rest()
-        
-        elif command == "status":
-            return self.spirit.get_status()
-        
-        elif command == "evolve":
-            return self.spirit.evolve()
-        
-        elif command == "help":
-            return self.show_help()
-        
-        elif command == "quit":
-            self.running = False
-            return f"\n👋 Goodbye! You cared for {self.spirit.name} for {self.spirit.age_days} day(s) ({self.spirit.get_time_alive_str()}).\n"
-        
-        else:
-            return f"❌ Unknown command: '{command}'. Type 'help' for available commands."
-    
-    def check_win_condition(self):
-        """Check if player has won the game"""
-        if self.spirit.evolution_stage >= len(SpiritAnimal.EVOLUTION_STAGES) - 1:
-            if self.spirit.hunger > 50 and self.spirit.happiness > 50 and self.spirit.health > 50:
-                return True
-        return False
-    
-    def run(self):
-        """Main game loop"""
-        self.start_game()
-        
-        # Check if game was cancelled during startup
-        if not self.running:
-            return
-        
-        while self.running and self.spirit.is_alive:
-            print("\n" + "─" * 46)
-            print("\nAvailable commands: feed, play, rest, status, evolve, help, quit")
+        if parsed_path.path == '/' or parsed_path.path == '/index.html':
+            # Serve the HTML file
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
             
+            # Read and serve the HTML file
+            html_file = os.path.join(os.path.dirname(__file__), 'game.html')
             try:
-                command = input(f"\n{self.spirit.get_stage_emoji()} What would you like to do? > ").strip()
-            except KeyboardInterrupt:
-                print("\n\n👋 Goodbye! Thanks for playing Spirit Hatch!")
-                print(f"You cared for {self.spirit.name} for {self.spirit.age_days} day(s) ({self.spirit.get_time_alive_str()}).\n")
-                break
-            except EOFError:
-                print("\n\n❌ Input error occurred. Exiting game.")
-                break
-            
-            result = self.process_command(command)
-            print(f"\n{result}")
-            
-            # Check win condition
-            if self.check_win_condition():
-                self.clear_screen()
-                    
-                print(f"""
-╔══════════════════════════════════════════════╗
-║                                              ║
-║              🎉 VICTORY! 🎉                  ║
-║                                              ║
-║     You've raised an Ancient Spirit!        ║
-║                                              ║
-╚══════════════════════════════════════════════╝
-
-{self.spirit.get_stage_emoji()} {self.spirit.name} has reached its ultimate form!
-
-📊 Final Stats:
-   • Age: {self.spirit.age_days} days
-   • Time Alive: {self.spirit.get_time_alive_str()}
-   • Interactions: {self.spirit.interactions}
-   • Hunger: {self.spirit.hunger:.0f}%
-   • Happiness: {self.spirit.happiness:.0f}%
-   • Health: {self.spirit.health:.0f}%
-
-You are a true Spirit Keeper! 🏆
-Thank you for playing SPIRIT HATCH! ✨
-""")
-                self.running = False
+                with open(html_file, 'r', encoding='utf-8') as f:
+                    self.wfile.write(f.read().encode())
+            except FileNotFoundError:
+                self.wfile.write(b"Error: game.html not found!")
         
-        # Game over check
-        if not self.spirit.is_alive:
-            print(self.spirit.get_status())
+        elif parsed_path.path == '/api/state':
+            # Get game state
+            update_stats()
+            event = check_random_event()
+            
+            response = {
+                "state": game_state,
+                "stage": EVOLUTION_STAGES[game_state["evolution_stage"]]
+            }
+            
+            if event:
+                response["event"] = event
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode())
+        
+        else:
+            self.send_error(404)
+    
+    def do_POST(self):
+        """Handle POST requests"""
+        parsed_path = urlparse(self.path)
+        
+        if parsed_path.path == '/api/start':
+            # Start new game
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode())
+            
+            global game_state
+            game_state = {
+                "name": data.get('name', 'Spirit'),
+                "hunger": 50.0,
+                "happiness": 50.0,
+                "health": 50.0,
+                "age_days": 0,
+                "evolution_stage": 0,
+                "interactions": 0,
+                "events_experienced": 0,
+                "is_alive": True,
+                "start_time": time.time(),
+                "last_update": time.time(),
+                "last_day_update": time.time(),
+                "last_event_check": time.time()
+            }
+            
+            response = {"success": True, "state": game_state}
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode())
+        
+        elif parsed_path.path.startswith('/api/action/'):
+            # Perform action
+            action = parsed_path.path.split('/')[-1]
+            result = perform_action(action)
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(result).encode())
+        
+        else:
+            self.send_error(404)
+    
+    def log_message(self, format, *args):
+        """Override to customize logging"""
+        # Only log important messages
+        if '200' not in str(args[1]):
+            return
+        print(f"[{self.log_date_time_string()}] {format % args}")
 
 
 def main():
-    """Entry point for the game"""
-    game = Game()
-    game.run()
+    """Start the web server"""
+    print("\n" + "="*60)
+    print("✨ SPIRIT HATCH - Simple Python Web Server ✨")
+    print("="*60)
+    print("\n✅ No external dependencies needed!")
+    print("✅ Uses only Python standard library")
+    print("✅ Works perfectly in VS Code\n")
+    print(f"📡 Server starting on port {PORT}...")
+    print(f"🌐 Open your browser to: http://localhost:{PORT}")
+    print("\n⚠️  Press CTRL+C to stop the server")
+    print("="*60 + "\n")
+    
+    with socketserver.TCPServer(("", PORT), GameHandler) as httpd:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\n\n✨ Server stopped. Thanks for playing Spirit Hatch! ✨\n")
 
 
 if __name__ == "__main__":
