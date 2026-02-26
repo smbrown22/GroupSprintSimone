@@ -8,6 +8,9 @@ Section Two -
 - Deployment - Sending the game to the next team, then recieving errors that were created back to development team 
 - Maintenance - Fixing errors that were found, including other errors that were not necessarily intended. 
 Section Three - 
+-Bug 1 - 
 - 
-- 
-- Since the phase it was in was the deployment/maintenance phase, the bugs being caught late don't particularly matter too much. It was still within the due date for the project, and end users being impacted wasn't too much of a big deal. Bugs being caught before a hard deadline is the most important thing. 
+- Since the phase it was in was the deployment/maintenance phase, the bugs being caught late don't particularly matter too much. It was still within the due date for the project, and end users being impacted wasn't too much of a big deal. Bugs being caught before a hard deadline is the most important thing.
+Section Four -
+- Our QA group found all of the errors towards the end of the phase. Testing was a large block of our time, so it made up the majority of the experience. It still followed the overall 
+Section Five -
